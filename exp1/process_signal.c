@@ -3,17 +3,8 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
-
-volatile sig_atomic_t child_terminated = 0;
-
-void signal_handler(int sig) {
-    if (sig == SIGINT) {
-        printf("Parent process received SIGINT\n");
-        // Send signals to child processes
-        kill(0, SIGUSR1); // Send SIGUSR1 to all child processes
-        kill(0, SIGUSR2); // Send SIGUSR2 to all child processes
-    }
-}
+#include <termios.h>
+#include <fcntl.h>
 
 void child_signal_handler(int sig) {
     if (sig == SIGUSR1) {
@@ -25,9 +16,28 @@ void child_signal_handler(int sig) {
     }
 }
 
-int main() {
-    signal(SIGINT, signal_handler); // Handle SIGINT in parent
+int kbhit() {
+    struct termios oldt, newt;
+    int oldf;
+    char ch;
+    int result;
 
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+
+    result = read(STDIN_FILENO, &ch, 1);
+    
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    fcntl(STDIN_FILENO, F_SETFL, oldf);
+
+    return (result > 0) ? ch : 0;
+}
+
+int main() {
     pid_t pid1 = fork();
     if (pid1 == 0) {
         // First child process
@@ -42,16 +52,21 @@ int main() {
         while (1) pause(); // Wait for signals
     }
 
-    // Parent process waits for child processes to terminate
-    while (child_terminated < 2) {
-        // Wait for children to terminate
-        int status;
-        pid_t child_pid = wait(&status);
-        if (child_pid > 0) {
-            child_terminated++;
+    printf("Press 'Enter' key to kill the child processes...\n");
+    while (1) {
+        int key = kbhit();
+        if (key == '\n') { // Check for Enter key
+            printf("Parent process received Enter key. Sending signals...\n");
+            kill(pid1, SIGUSR1); // Send SIGUSR1 to first child
+            kill(pid2, SIGUSR2); // Send SIGUSR2 to second child
+            break;
         }
     }
 
+    // Wait for child processes to finish
+    wait(NULL);
+    wait(NULL);
     printf("Parent process is killed!!\n");
+
     return 0;
 }
